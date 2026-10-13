@@ -447,6 +447,10 @@ h2.t { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
   .dgrid { margin-bottom: 8px; }
   .dgrid > div { padding: 4px 0; font-size: 12.5px; }
   .interp .q { margin-bottom: 2px; }
+  .dom { gap: 4px; }
+  .track { height: 19px; }
+  .domrow { grid-template-columns: 112px 1fr 44px; }
+  .domrow .nm { font-size: 12px; }
   .panel > header { padding: 9px 14px 7px; }
   .panel > header h3 { font-size: 16px; }
   .cmpview { overflow: hidden; }
@@ -1184,10 +1188,19 @@ function panelCriteria(body, meta) {
       var cell = el("button", "c"); cell.type = "button";
       if (den) {
         var share = pass / den, k = clamp(Math.floor((1 - share) * 5), 0, 4);
-        if (pass) { cell.style.background = RAMP[k]; cell.style.borderColor = RAMP[k]; cell.style.color = share > 0.4 ? "#fff" : "var(--ink)"; }
+        if (pass) {
+          // text colour follows the ramp step, not the share: the dark end of
+          // the ramp always carries white numerals
+          cell.style.background = RAMP[k];
+          cell.style.borderColor = RAMP[k];
+          cell.style.color = k >= 2 ? "#fff" : "var(--ink)";
+          $$("small", cell).forEach(function (s) { s.style.color = k >= 2 ? "rgba(255,255,255,.75)" : ""; });
+        }
       } else { cell.style.opacity = ".45"; }
       cell.appendChild(el("b", null, den ? String(pass) : "—"));
-      cell.appendChild(el("small", null, den ? "/" + den : "n/a"));
+      var sm = el("small", null, den ? "/" + den : "n/a");
+      if (den && pass && clamp(Math.floor((1 - pass / den) * 5), 0, 4) >= 2) sm.style.color = "rgba(255,255,255,.75)";
+      cell.appendChild(sm);
       var on = S.filter && S.filter.arm === a && S.filter.index === idx;
       cell.setAttribute("aria-pressed", on ? "true" : "false");
       cell.setAttribute("aria-label", ARMS[a].label + ", " + crit.label + ": " + pass + " met of " + den + " assessed");
@@ -1325,7 +1338,16 @@ function panelNetwork(body, meta) {
   var svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, role: "img",
     "aria-label": "Combination network for the selected pair" });
   svg.style.width = "100%"; svg.style.height = "236px";
-  body.appendChild(svg);
+  var netbox = el("div", "net");
+  netbox.appendChild(svg);
+  body.appendChild(netbox);
+  // the diagram takes whatever height the panel can spare
+  requestAnimationFrame(function () {
+    var other = 0;
+    Array.prototype.forEach.call(body.children, function (k) { if (k !== netbox) other += k.offsetHeight; });
+    var avail = body.clientHeight - other - 12;
+    svg.style.height = clamp(avail, 110, 240) + "px";
+  });
   function line(x1, y1, x2, y2) {
     svg.appendChild(svgEl("line", { x1: x1, y1: y1, x2: x2, y2: y2, stroke: "#D8DFDC", "stroke-width": 1.4 }));
   }
@@ -1498,6 +1520,19 @@ function fitToBox(inner, moreText) {
   }
   var pre = +(inner.dataset.dropped || 0);
   var total = dropped + pre;
+  // Last resort: shed trailing *secondary* blocks only. Primary content —
+  // the bars, the score table, the diagram — is never removed.
+  var SECONDARY = ".note, .issue, .rowitem, .xs, .sm, .fitnote";
+  var guard = 0;
+  while (over() && guard++ < 6) {
+    var kids = Array.prototype.filter.call(inner.children, function (k) {
+      return k.matches(SECONDARY) && !k.classList.contains("fitnote");
+    });
+    if (!kids.length) break;
+    kids[kids.length - 1].remove();
+    dropped++;
+  }
+  if (total || dropped) total = dropped + pre;
   if (total && moreText) {
     var n = el("div", "xs fitnote");
     n.textContent = total + " " + moreText;
@@ -1562,18 +1597,24 @@ function renderActivity(r, m) {
     });
 
     var kv = el("div", "kv"); kv.style.marginTop = "14px";
-    kv.dataset.trim = "1";
     function addKV(k, v) { kv.appendChild(el("div", "k", k)); var d = el("div"); d.innerHTML = v; kv.appendChild(d); }
     if (m.gain_pp) addKV("Improvement over better single agent",
       "<b class='num'>+" + num(m.gain_pp.v, 1) + " pp</b> · " + esc(srcLine(m.gain_pp)));
     if (m.bliss_excess) addKV("Bliss excess",
       "<b class='num'>" + num(m.bliss_excess.v, 1) + "</b> · a formal synergy metric, distinct from the " +
       "improvement above · " + esc(srcLine(m.bliss_excess)));
-    addKV("Endpoint", m.endpoint ? esc(m.endpoint.v) + " · " + esc(armNames(m.endpoint.arms))
-      : "<span class='xs'>not stated for this pair</span>");
-    addKV("Exposure duration", m.duration ? (m.duration.v[0] === m.duration.v[1] ? m.duration.v[0] + " h"
-      : m.duration.v[0] + "–" + m.duration.v[1] + " h") : "<span class='xs'>not stated for this pair</span>");
     body.appendChild(kv);
+
+    // endpoint and duration repeat on Rationale & test conditions, so they
+    // give way first when the panel is short
+    var kv2 = el("div", "kv"); kv2.style.marginTop = "8px";
+    kv2.dataset.trim = "1";
+    function addKV2(k, v) { kv2.appendChild(el("div", "k", k)); var d = el("div"); d.innerHTML = v; kv2.appendChild(d); }
+    addKV2("Endpoint", m.endpoint ? esc(m.endpoint.v) + " · " + esc(armNames(m.endpoint.arms))
+      : "<span class='xs'>not stated for this pair</span>");
+    addKV2("Exposure duration", m.duration ? (m.duration.v[0] === m.duration.v[1] ? m.duration.v[0] + " h"
+      : m.duration.v[0] + "–" + m.duration.v[1] + " h") : "<span class='xs'>not stated for this pair</span>");
+    body.appendChild(kv2);
 
     var pbrow = el("div"); pbrow.style.margin = "14px 0 0";
     pbrow.dataset.trim = "1";
@@ -2303,30 +2344,6 @@ boot().then(function (data) {
   renderContext();
   render();
   if (S.cmpOpen) $("#cmpview").classList.add("on");
-  if (/(^|&)audit=1/.test((location.hash || "").slice(1))) {
-    setTimeout(function () {
-      var bad = [];
-      $$("*").forEach(function (n) {
-        if (!n.clientHeight || n.tagName === "CANVAS") return;
-        if (/\bclamp\d\b/.test(n.className)) return;
-        var st = getComputedStyle(n);
-        if (st.overflowY !== "hidden" && st.overflow !== "hidden") return;
-        if (n.scrollHeight > n.clientHeight + 2) {
-          bad.push((n.id || n.className || n.tagName) + ":" + (n.scrollHeight - n.clientHeight) +
-            "/trim" + n.querySelectorAll("[data-trim]").length +
-            "/h" + n.clientHeight + "/" + n.scrollHeight);
-        }
-      });
-      var cv = $(".canvas"), why = "";
-      if (cv && cv.scrollHeight > cv.clientHeight + 2) {
-        $$(".canvas > *").forEach(function (ch) {
-          var b = ch.offsetTop + ch.offsetHeight;
-          if (b > cv.clientHeight) why += " [" + (ch.id || ch.className) + " bottom=" + b + "]";
-        });
-      }
-      document.title = bad.length ? "OVERFLOW " + bad.join(" | ") + why : "FITS";
-    }, 600);
-  }
   if (/(^|&)drawer=/.test((location.hash || "").slice(1))) {
     var deepPage = S.page;
     openDrawer(S.drawerArm);
